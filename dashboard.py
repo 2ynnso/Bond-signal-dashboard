@@ -48,6 +48,19 @@ CARD_BORDER = {
 }
 
 
+def get_fred_api_key() -> str:
+    env_key = os.getenv("FRED_API_KEY", "").strip()
+    if env_key:
+        return env_key
+
+    try:
+        secret_key = st.secrets.get("FRED_API_KEY", "").strip()
+    except Exception:  # noqa: BLE001
+        secret_key = ""
+
+    return secret_key
+
+
 def inject_css() -> None:
     st.markdown(
         """
@@ -248,7 +261,7 @@ def fetch_ppr_series(start_date: pd.Timestamp) -> tuple[pd.Series, list[str]]:
         return pd.Series(dtype=float), ["SHYG 데이터가 비어 있습니다."]
 
     shyg = coerce_series(data, preferred_columns=["Adj Close", "Close", "SHYG"])
-    shyg = shyg.dropna().sort_index().resample("BM").last().ffill()
+    shyg = shyg.dropna().sort_index().resample("BME").last().ffill()
     rank = shyg.rolling(12, min_periods=6).apply(percentile_rank_last, raw=False)
     ppr = 1 - rank
     if isinstance(ppr, pd.DataFrame):
@@ -443,7 +456,7 @@ def line_chart(frame: pd.DataFrame, columns: list[str], title: str, colors: list
     )
     fig.update_xaxes(showgrid=False, color="#5f7389")
     fig.update_yaxes(gridcolor="rgba(18,32,51,0.08)", color="#5f7389")
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 def signal_focus_chart(
@@ -495,26 +508,22 @@ def signal_focus_chart(
     )
     fig.update_xaxes(showgrid=False, color="#5f7389")
     fig.update_yaxes(gridcolor="rgba(18,32,51,0.08)", color="#5f7389")
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
 inject_css()
 
-default_key = os.getenv("FRED_API_KEY", "")
+default_key = get_fred_api_key()
 
 with st.sidebar:
     st.header("Control")
     years = st.slider("조회 기간(년)", 1, 15, 8)
     include_ppr = st.toggle("PPR(SHYG) 포함", value=True)
-    run = st.button("데이터 불러오기", type="primary")
-    st.caption(".env 파일의 `FRED_API_KEY`를 자동 사용")
-
-if not run:
-    st.info("왼쪽 사이드바에서 `데이터 불러오기`를 누르세요.")
-    st.stop()
+    st.button("데이터 새로고침", type="primary")
+    st.caption("로컬 `.env` 또는 Streamlit Cloud `secrets`의 `FRED_API_KEY`를 자동 사용")
 
 if not default_key:
-    st.error(".env 파일에 FRED_API_KEY가 필요합니다.")
+    st.error("`FRED_API_KEY`가 필요합니다. 로컬 `.env` 또는 Streamlit Cloud `secrets`에 설정하세요.")
     st.stop()
 
 start_date = pd.Timestamp.today().normalize() - pd.DateOffset(years=years)
@@ -598,4 +607,4 @@ with g3:
 with g4:
     signal_history = macro[[c for c in ["VIX", "HY_OAS_Z", "PPR", "UST_10Y_2Y", "regime"] if c in macro.columns]].tail(12)
     st.subheader("Recent Signal Table")
-    st.dataframe(signal_history.reset_index(), use_container_width=True, hide_index=True)
+    st.dataframe(signal_history.reset_index(), width="stretch", hide_index=True)

@@ -41,6 +41,7 @@ CARD_BG = {
     "info": "#1a2d4d",
     "very_risk_on": "#0f3d1f",
     "risk_on": "#1a3d4d",
+    "watch": "#3d3d1a",
     "risk_off": "#3d3d1a",
     "very_risk_off": "#4d1a1a",
     "agg_benchmark": "#2d2d1a",  # 노란색 계열 배경
@@ -53,6 +54,7 @@ CARD_BORDER = {
     "info": "#60a5fa",
     "very_risk_on": "#22c55e",
     "risk_on": "#06b6d4",
+    "watch": "#eab308",
     "risk_off": "#eab308",
     "very_risk_off": "#ff6b6b",
     "agg_benchmark": "#facc15",  # 노란색 테두리
@@ -187,15 +189,18 @@ def safe_zscore(series: pd.Series) -> pd.Series:
 def define_hierarchical_regime(row: pd.Series) -> int | float:
     if row["VIX"] > 30:
         return 4
+
+    # OAS_Z가 양수면 Credit 스트레스가 있어야 위험(리스크오프)로 판단
+    if row["OAS_Z"] >= 0:
+        return 3
+
+    # PPR가 낮으면 공격적 매수, 높으면 방어적(리스크오프)
     if row["PPR"] < 0.2:
         return 1
     if row["PPR"] > 0.8:
         return 4
-    if row["OAS_Z"] < 0:
-        return 2
-    if row["OAS_Z"] >= 0:
-        return 3
-    return np.nan
+
+    return 2
 
 
 def percentile_rank_last(window: pd.Series) -> float:
@@ -413,18 +418,16 @@ def classify_vix(value: float) -> tuple[str, str, str]:
     if value >= 30:
         return "bad", "Risk Off", "30 이상"
     if value >= 20:
-        return "bad", "Watch", "20~30"
+        return "watch", "Watch", "20~30"
     return "good", "Stable", "20 미만"
 
 
 def classify_oas_z(value: float) -> tuple[str, str, str]:
     if pd.isna(value):
         return "info", "N/A", "기준 0"
-    if value >= 0:
-        return "bad", "Wide", "0 이상"
-    if value >= -0.5:
-        return "bad", "Near 0", "-0.5~0"
-    return "good", "Tight", "-0.5 미만"
+    if value < 0:
+        return "good", "Tight", "0 미만"
+    return "bad", "Wide", "0 이상"
 
 
 def classify_ppr(value: float) -> tuple[str, str, str]:
@@ -672,7 +675,7 @@ c1, c2, c3, c4 = st.columns(4)
 with c1:
     render_card("VIX", format_value(latest_value(macro, "VIX")), vix_status, vix_note, vix_tone)
 with c2:
-    render_card("HY OAS Z", format_value(latest_value(macro, "HY_OAS_Z")), oas_status, oas_note, oas_tone)
+    render_card("OAS Z", format_value(latest_value(macro, "OAS_Z")), oas_status, oas_note, oas_tone)
 with c3:
     ppr_display = format_value(latest_value(macro, "PPR"))
     render_card("PPR", ppr_display, ppr_status, ppr_note_short, ppr_tone)

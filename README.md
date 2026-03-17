@@ -90,6 +90,12 @@ FRED_API_KEY="your_api_key"
 
 배포가 끝나면 공개 URL이 생성되고, 그 링크를 그대로 사람들에게 공유하면 됩니다.
 
+현재 저장소 기준 배포 연결값은 아래처럼 두면 됩니다.
+
+- Repository: `2ynnso/Bond-signal-dashboard`
+- Branch: `main`
+- Main file path: `dashboard.py`
+
 ## Environment Notes
 
 - 로컬 실행: `.env`의 `FRED_API_KEY` 사용

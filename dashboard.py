@@ -306,26 +306,46 @@ def fetch_fred_api(start_date: pd.Timestamp, api_key: str) -> tuple[pd.DataFrame
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def fetch_ppr_series(start_date: pd.Timestamp) -> tuple[pd.Series, list[str]]:
+def fetch_yfinance_series(
+    ticker: str,
+    start_date: pd.Timestamp,
+    preferred_columns: list[str],
+) -> tuple[pd.Series, list[str]]:
     if yf is None:
-        return pd.Series(dtype=float), ["yfinance가 설치되지 않아 PPR을 계산하지 못했습니다."]
+        return pd.Series(dtype=float), [f"yfinance가 설치되지 않아 {ticker} 데이터를 불러올 수 없습니다."]
 
     try:
+        # Yahoo의 start-date 요청이 특정 기간에서 불안정한 경우가 있어
+        # 최대 히스토리를 받은 뒤 앱에서 필요한 기간만 자릅니다.
         data = yf.download(
-            "SHYG",
-            start=start_date.strftime("%Y-%m-%d"),
+            ticker,
+            period="max",
             auto_adjust=True,
             progress=False,
             threads=False,
-            timeout=10,
+            timeout=20,
         )
     except Exception as exc:  # noqa: BLE001
-        return pd.Series(dtype=float), [f"SHYG 로드 실패: {exc}"]
+        return pd.Series(dtype=float), [f"{ticker} 로드 실패: {exc}"]
 
     if data.empty:
-        return pd.Series(dtype=float), ["SHYG 데이터가 비어 있습니다."]
+        return pd.Series(dtype=float), [f"{ticker} 데이터가 비어 있습니다."]
 
-    shyg = coerce_series(data, preferred_columns=["Adj Close", "Close", "SHYG"])
+    series = coerce_series(data, preferred_columns=preferred_columns)
+    series = series.dropna().sort_index()
+    series = series.loc[series.index >= start_date]
+    if series.empty:
+        return pd.Series(dtype=float), [f"{ticker} 데이터가 선택한 기간에 없습니다."]
+    series.name = ticker
+    return series, []
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_ppr_series(start_date: pd.Timestamp) -> tuple[pd.Series, list[str]]:
+    shyg, warnings = fetch_yfinance_series("SHYG", start_date, ["Adj Close", "Close", "SHYG"])
+    if shyg.empty:
+        return pd.Series(dtype=float), warnings
+
     shyg = shyg.dropna().sort_index().resample("BME").last().ffill()
     rank = shyg.rolling(12, min_periods=6).rank(pct=True)
     ppr = 1 - rank
@@ -337,28 +357,7 @@ def fetch_ppr_series(start_date: pd.Timestamp) -> tuple[pd.Series, list[str]]:
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_agg_series(start_date: pd.Timestamp) -> tuple[pd.Series, list[str]]:
-    if yf is None:
-        return pd.Series(dtype=float), ["yfinance가 설치되지 않아 AGG 가격을 불러올 수 없습니다."]
-
-    try:
-        data = yf.download(
-            "AGG",
-            start=start_date.strftime("%Y-%m-%d"),
-            auto_adjust=True,
-            progress=False,
-            threads=False,
-            timeout=10,
-        )
-    except Exception as exc:  # noqa: BLE001
-        return pd.Series(dtype=float), [f"AGG 로드 실패: {exc}"]
-
-    if data.empty:
-        return pd.Series(dtype=float), ["AGG 데이터가 비어 있습니다."]
-
-    agg = coerce_series(data, preferred_columns=["Adj Close", "Close", "AGG"])
-    agg = agg.dropna().sort_index()
-    agg.name = "AGG"
-    return agg, []
+    return fetch_yfinance_series("AGG", start_date, ["Adj Close", "Close", "AGG"])
 
 
 def build_dataset(start_date: pd.Timestamp, api_key: str, include_ppr: bool) -> tuple[pd.DataFrame, list[str], str]:

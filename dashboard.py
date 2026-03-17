@@ -113,6 +113,12 @@ def inject_css() -> None:
             line-height: 1.45;
             margin-bottom: 2px;
         }
+        .section-divider {
+            height: 1px;
+            width: 100%;
+            margin: 34px 0 56px 0;
+            background: linear-gradient(90deg, rgba(255,255,255,0.2), rgba(255,255,255,0.1));
+        }
         .card {
             border-radius: 18px;
             padding: 18px;
@@ -493,6 +499,10 @@ def render_hero(date_label: str, regime: str) -> None:
     )
 
 
+def render_section_divider() -> None:
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+
 def render_yield_panel(title: str, data: dict[str, float], columns_per_row: int = 4) -> None:
     st.markdown(f"**{title}**")
     labels = list(data.keys())
@@ -521,6 +531,30 @@ def render_snapshot_board(title: str, items: list[dict[str, str]], columns_per_r
                     delta_float = None if delta_value == "N/A" else delta_value
                     with col:
                         st.metric(item["label"], item["value"], delta=delta_float, border=True)
+
+
+def style_recent_signal_table(frame: pd.DataFrame) -> pd.io.formats.style.Styler:
+    display = frame.copy()
+    if "index" in display.columns:
+        display = display.rename(columns={"index": "date"})
+    if "date" in display.columns:
+        display["date"] = pd.to_datetime(display["date"]).dt.strftime("%Y-%m-%d")
+
+    return display.style.format(
+        {
+            "VIX": "{:.2f}",
+            "OAS_Z": "{:.4f}",
+            "PPR": "{:.4f}",
+            "UST_10Y_2Y": "{:.2f}",
+        },
+        na_rep="N/A",
+    ).set_table_styles(
+        [
+            {"selector": "th", "props": [("background-color", "#111111"), ("color", "#f3f4f6"), ("border", "1px solid #2f2f2f")]},
+            {"selector": "td", "props": [("background-color", "#000000"), ("color", "#f3f4f6"), ("border", "1px solid #222222")]},
+            {"selector": "tbody tr:hover td", "props": [("background-color", "#151515")]},
+        ]
+    )
 
 
 def line_chart(frame: pd.DataFrame, columns: list[str], title: str, colors: list[str]) -> None:
@@ -653,7 +687,7 @@ render_hero(latest_date, str(latest["regime"]))
 # Regime 상세 정보
 regime_detailed = latest["regime_detailed"] if "regime_detailed" in latest.index else "N/A"
 regime_tone, regime_note = classify_regime_detailed(regime_detailed)
-st.divider()
+render_section_divider()
 st.markdown("### Strategy Regime")
 risk_score_detail = f"Signals:\n• VIX({format_value(latest_value(macro, 'VIX'))}) • OAS_Z({format_value(latest_value(macro, 'OAS_Z'))}) • PPR({format_value(latest_value(macro, 'PPR'))})"
 render_regime_card(regime_detailed, regime_note, risk_score_detail, "info")
@@ -667,6 +701,9 @@ spread_tone, spread_status, spread_note = classify_spread(latest_value(macro, "U
 agg_value = latest_value(macro, "AGG")
 agg_delta = latest_delta(macro, "AGG", 1)  # 1일 전일대비
 agg_tone = "agg"  # 독립적인 색깔로 변경
+agg_note = "Benchmark ETF"
+if pd.isna(agg_value):
+    agg_note = "Yahoo Finance 응답 실패 또는 비어 있음"
 
 st.markdown("### Key Signal Indicators")
 st.markdown("**3가지 위험도 지표 + 벤치마크 ETF**")
@@ -680,7 +717,7 @@ with c3:
     ppr_display = format_value(latest_value(macro, "PPR"))
     render_card("PPR", ppr_display, ppr_status, ppr_note_short, ppr_tone)
 with c4:
-    render_card("AGG ETF", format_value(agg_value, "$"), format_signed(agg_delta, "$"), "Benchmark ETF", agg_tone)
+    render_card("AGG ETF", format_value(agg_value, "$"), format_signed(agg_delta, "$"), agg_note, agg_tone)
 
 st.caption(ppr_note)
 
@@ -733,4 +770,4 @@ with g3:
 with g4:
     signal_history = macro[[c for c in ["VIX", "OAS_Z", "PPR", "UST_10Y_2Y", "regime", "regime_detailed"] if c in macro.columns]].tail(12)
     st.subheader("Recent Signal Table")
-    st.dataframe(signal_history.reset_index(), use_container_width=True, hide_index=True)
+    st.dataframe(style_recent_signal_table(signal_history.reset_index()), use_container_width=True, hide_index=True)

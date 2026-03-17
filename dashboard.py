@@ -119,6 +119,68 @@ def inject_css() -> None:
             margin: 34px 0 56px 0;
             background: linear-gradient(90deg, rgba(255,255,255,0.2), rgba(255,255,255,0.1));
         }
+        .recent-table-wrap {
+            border: 1px solid #2a2a2a;
+            border-radius: 18px;
+            background: #050505;
+            overflow-x: auto;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+        }
+        .recent-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            color: #f3f4f6;
+            font-size: 0.98rem;
+            background: #050505;
+        }
+        .recent-table thead th {
+            position: sticky;
+            top: 0;
+            background: #111111;
+            color: #d1d5db;
+            font-weight: 700;
+            text-align: left;
+            padding: 14px 16px;
+            border-bottom: 1px solid #2a2a2a;
+            white-space: nowrap;
+        }
+        .recent-table tbody td {
+            padding: 14px 16px;
+            border-bottom: 1px solid #1b1b1b;
+            color: #f9fafb;
+            white-space: nowrap;
+        }
+        .recent-table tbody tr:nth-child(odd) td {
+            background: #080808;
+        }
+        .recent-table tbody tr:nth-child(even) td {
+            background: #0d0d0d;
+        }
+        .recent-table tbody tr:hover td {
+            background: #161616;
+        }
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] p,
+        [data-testid="stSidebar"] span,
+        [data-testid="stSidebar"] div {
+            color: #f3f4f6 !important;
+        }
+        [data-testid="stSidebar"] .stSlider [data-baseweb="slider"] + div,
+        [data-testid="stSidebar"] .stSlider [data-baseweb="slider"] ~ div {
+            color: #f3f4f6 !important;
+        }
+        [data-testid="stSidebar"] [data-baseweb="select"] > div,
+        [data-testid="stSidebar"] [data-baseweb="base-input"] > div,
+        [data-testid="stSidebar"] .stTextInput input,
+        [data-testid="stSidebar"] .stNumberInput input {
+            background: #111111 !important;
+            color: #f9fafb !important;
+            border-color: #333333 !important;
+        }
+        [data-testid="stSidebar"] button {
+            color: #f9fafb !important;
+        }
         .card {
             border-radius: 18px;
             padding: 18px;
@@ -532,28 +594,24 @@ def render_snapshot_board(title: str, items: list[dict[str, str]], columns_per_r
                         st.metric(item["label"], item["value"], delta=delta_float, border=True)
 
 
-def style_recent_signal_table(frame: pd.DataFrame) -> pd.io.formats.style.Styler:
+def render_recent_signal_table(frame: pd.DataFrame) -> None:
     display = frame.copy()
     if "index" in display.columns:
         display = display.rename(columns={"index": "date"})
     if "date" in display.columns:
         display["date"] = pd.to_datetime(display["date"]).dt.strftime("%Y-%m-%d")
+    format_map = {
+        "VIX": "{:.2f}",
+        "OAS_Z": "{:.4f}",
+        "PPR": "{:.4f}",
+        "UST_10Y_2Y": "{:.2f}",
+    }
+    for column, fmt in format_map.items():
+        if column in display.columns:
+            display[column] = display[column].map(lambda x: "N/A" if pd.isna(x) else fmt.format(x))
 
-    return display.style.format(
-        {
-            "VIX": "{:.2f}",
-            "OAS_Z": "{:.4f}",
-            "PPR": "{:.4f}",
-            "UST_10Y_2Y": "{:.2f}",
-        },
-        na_rep="N/A",
-    ).set_table_styles(
-        [
-            {"selector": "th", "props": [("background-color", "#111111"), ("color", "#f3f4f6"), ("border", "1px solid #2f2f2f")]},
-            {"selector": "td", "props": [("background-color", "#000000"), ("color", "#f3f4f6"), ("border", "1px solid #222222")]},
-            {"selector": "tbody tr:hover td", "props": [("background-color", "#151515")]},
-        ]
-    )
+    html = display.to_html(index=False, escape=False, classes="recent-table")
+    st.markdown(f'<div class="recent-table-wrap">{html}</div>', unsafe_allow_html=True)
 
 
 def line_chart(frame: pd.DataFrame, columns: list[str], title: str, colors: list[str]) -> None:
@@ -763,10 +821,8 @@ with g1:
 with g2:
     line_chart(macro, ["HY_OAS", "HY_YIELD"], "High Yield Credit", ["#dc2626", "#14b8a6"])
 
-g3, g4 = st.columns(2)
-with g3:
-    line_chart(macro, ["UST_10Y_2Y"], "Curve Slope History", ["#3b82f6"])
-with g4:
-    signal_history = macro[[c for c in ["VIX", "OAS_Z", "PPR", "UST_10Y_2Y", "regime", "regime_detailed"] if c in macro.columns]].tail(12)
-    st.subheader("Recent Signal Table")
-    st.dataframe(style_recent_signal_table(signal_history.reset_index()), use_container_width=True, hide_index=True)
+line_chart(macro, ["UST_10Y_2Y"], "Curve Slope History", ["#3b82f6"])
+
+signal_history = macro[[c for c in ["VIX", "OAS_Z", "PPR", "UST_10Y_2Y", "regime", "regime_detailed"] if c in macro.columns]].tail(12)
+st.subheader("Recent Signal Table")
+render_recent_signal_table(signal_history.reset_index())

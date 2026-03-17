@@ -44,6 +44,7 @@ CARD_BG = {
     "risk_off": "#3d3d1a",
     "very_risk_off": "#4d1a1a",
     "agg_benchmark": "#2d2d1a",  # 노란색 계열 배경
+    "agg": "#2a2a2a",  # AGG 독립 색상
 }
 CARD_BORDER = {
     "good": "#4ade80",
@@ -55,6 +56,14 @@ CARD_BORDER = {
     "risk_off": "#eab308",
     "very_risk_off": "#ff6b6b",
     "agg_benchmark": "#facc15",  # 노란색 테두리
+    "agg": "#666666",  # AGG 독립 테두리
+}
+
+REGIME_LABELS = {
+    1: "Regime 1: Very Risk On",
+    2: "Regime 2: Risk On",
+    3: "Regime 3: Risk Off",
+    4: "Regime 4: Very Risk Off",
 }
 
 
@@ -175,6 +184,20 @@ def safe_zscore(series: pd.Series) -> pd.Series:
     return (series - series.mean()) / std
 
 
+def define_hierarchical_regime(row: pd.Series) -> int | float:
+    if row["VIX"] > 30:
+        return 4
+    if row["PPR"] < 0.2:
+        return 1
+    if row["PPR"] > 0.8:
+        return 4
+    if row["OAS_Z"] < 0:
+        return 2
+    if row["OAS_Z"] >= 0:
+        return 3
+    return np.nan
+
+
 def percentile_rank_last(window: pd.Series) -> float:
     if window.isna().all():
         return np.nan
@@ -267,6 +290,7 @@ def fetch_fred_api(start_date: pd.Timestamp, api_key: str) -> tuple[pd.DataFrame
 
     macro = pd.concat(frames, axis=1).sort_index().ffill()
     macro["HY_OAS_Z"] = safe_zscore(macro["HY_OAS"])
+    macro["OAS_Z"] = macro["HY_OAS"].rolling(24, min_periods=6).apply(lambda x: (x.iloc[-1] - x.mean()) / x.std() if len(x) > 1 and x.std() > 0 else np.nan)
     return macro, warnings
 
 
@@ -292,7 +316,7 @@ def fetch_ppr_series(start_date: pd.Timestamp) -> tuple[pd.Series, list[str]]:
 
     shyg = coerce_series(data, preferred_columns=["Adj Close", "Close", "SHYG"])
     shyg = shyg.dropna().sort_index().resample("BME").last().ffill()
-    rank = shyg.rolling(12, min_periods=6).apply(percentile_rank_last, raw=False)
+    rank = shyg.rolling(12, min_periods=6).rank(pct=True)
     ppr = 1 - rank
     if isinstance(ppr, pd.DataFrame):
         ppr = ppr.squeeze()
@@ -351,22 +375,10 @@ def build_dataset(start_date: pd.Timestamp, api_key: str, include_ppr: bool) -> 
     else:
         macro["PPR"] = np.nan
 
-    macro["risk_off_score"] = (
-        (macro["VIX"] >= 30).astype(int)
-        + (macro["HY_OAS_Z"] >= 0).astype(int)
-        + (macro["PPR"] <= 0.2).fillna(False).astype(int)
-    )
-    macro["regime"] = np.select(
-        [macro["risk_off_score"] >= 2, macro["risk_off_score"] == 1],
-        ["Risk Off", "Neutral"],
-        default="Risk On",
-    )
-    # 4단계 Regime 분류
-    macro["regime_detailed"] = np.select(
-        [macro["risk_off_score"] == 0, macro["risk_off_score"] == 1, macro["risk_off_score"] == 2, macro["risk_off_score"] >= 3],
-        ["Regime 1: Very Risk On", "Regime 2: Risk On", "Regime 3: Risk Off", "Regime 4: Very Risk Off"],
-        default="N/A",
-    )
+    # Hierarchical Regime 분류 (참고: 바벨전략 로직)
+    macro["regime_code"] = macro.apply(define_hierarchical_regime, axis=1)
+    macro["regime_detailed"] = macro["regime_code"].map(REGIME_LABELS).fillna("N/A")
+    macro["regime"] = macro["regime_detailed"].str.replace(r"Regime \d+: ", "", regex=True)
     return macro, warnings, ppr_note
 
 
@@ -383,7 +395,7 @@ def latest_delta(frame: pd.DataFrame, column: str, periods: int = 5) -> float:
 
 
 def classify_regime_detailed(regime: str) -> tuple[str, str]:
-    if pd.isna(regime):
+    if pd.isna(regime) or regime == "N/A":
         return "info", "N/A"
     if "Very Risk On" in regime:
         return "very_risk_on", "공격적 매수 시점"
@@ -401,7 +413,7 @@ def classify_vix(value: float) -> tuple[str, str, str]:
     if value >= 30:
         return "bad", "Risk Off", "30 이상"
     if value >= 20:
-        return "neutral", "Watch", "20~30"
+        return "bad", "Watch", "20~30"
     return "good", "Stable", "20 미만"
 
 
@@ -411,7 +423,7 @@ def classify_oas_z(value: float) -> tuple[str, str, str]:
     if value >= 0:
         return "bad", "Wide", "0 이상"
     if value >= -0.5:
-        return "neutral", "Near 0", "-0.5~0"
+        return "bad", "Near 0", "-0.5~0"
     return "good", "Tight", "-0.5 미만"
 
 
@@ -422,7 +434,7 @@ def classify_ppr(value: float) -> tuple[str, str, str]:
         return "good", "Low", "0.2 이하"
     if value >= 0.8:
         return "bad", "High", "0.8 이상"
-    return "neutral", "Middle", "0.2~0.8"
+    return "bad", "Middle", "0.2~0.8"
 
 
 def classify_spread(value: float) -> tuple[str, str, str]:
@@ -640,18 +652,18 @@ regime_detailed = latest["regime_detailed"] if "regime_detailed" in latest.index
 regime_tone, regime_note = classify_regime_detailed(regime_detailed)
 st.divider()
 st.markdown("### Strategy Regime")
-risk_score_detail = f"Risk Score:\n• VIX({format_value(latest_value(macro, 'VIX'))}) • OAS_Z({format_value(latest_value(macro, 'HY_OAS_Z'))}) • PPR({format_value(latest_value(macro, 'PPR'))})"
-render_regime_card(regime_detailed, regime_note, risk_score_detail, regime_tone)
+risk_score_detail = f"Signals:\n• VIX({format_value(latest_value(macro, 'VIX'))}) • OAS_Z({format_value(latest_value(macro, 'OAS_Z'))}) • PPR({format_value(latest_value(macro, 'PPR'))})"
+render_regime_card(regime_detailed, regime_note, risk_score_detail, "info")
 
 vix_tone, vix_status, vix_note = classify_vix(latest_value(macro, "VIX"))
-oas_tone, oas_status, oas_note = classify_oas_z(latest_value(macro, "HY_OAS_Z"))
+oas_tone, oas_status, oas_note = classify_oas_z(latest_value(macro, "OAS_Z"))
 ppr_tone, ppr_status, ppr_note_short = classify_ppr(latest_value(macro, "PPR"))
 spread_tone, spread_status, spread_note = classify_spread(latest_value(macro, "UST_10Y_2Y"))
 
 # AGG ETF 정보
 agg_value = latest_value(macro, "AGG")
 agg_delta = latest_delta(macro, "AGG", 1)  # 1일 전일대비
-agg_tone = "agg_benchmark"  # 노란색 계열 고정
+agg_tone = "agg"  # 독립적인 색깔로 변경
 
 st.markdown("### Key Signal Indicators")
 st.markdown("**3가지 위험도 지표 + 벤치마크 ETF**")
@@ -690,7 +702,7 @@ render_snapshot_board(
     "Short-Term Change",
     [
         {"label": "VIX 5d", "value": format_signed(latest_delta(macro, "VIX")), "delta": format_delta(latest_delta(macro, "VIX"))},
-        {"label": "OAS Z 5d", "value": format_signed(latest_delta(macro, "HY_OAS_Z")), "delta": format_delta(latest_delta(macro, "HY_OAS_Z"))},
+        {"label": "OAS Z 5d", "value": format_signed(latest_delta(macro, "OAS_Z")), "delta": format_delta(latest_delta(macro, "OAS_Z"))},
         {"label": "US 10Y 5d", "value": format_signed(latest_delta(macro, "UST_10Y"), "%"), "delta": format_delta(latest_delta(macro, "UST_10Y"), "%")},
         {"label": "PPR 1m", "value": format_signed(latest_delta(macro, "PPR", 1)), "delta": format_delta(latest_delta(macro, "PPR", 1))},
     ],
@@ -701,7 +713,7 @@ f1, f2, f3 = st.columns(3)
 with f1:
     signal_focus_chart(macro, "VIX", "VIX", "#3b82f6", [(20, "#f59e0b"), (30, "#dc2626")])
 with f2:
-    signal_focus_chart(macro, "HY_OAS_Z", "HY OAS Z", "#3b82f6", [(0, "#dc2626")])
+    signal_focus_chart(macro, "OAS_Z", "OAS Z", "#3b82f6", [(0, "#dc2626")])
 with f3:
     signal_focus_chart(macro, "PPR", "PPR", "#20a464", [(0.2, "#dc2626"), (0.8, "#20a464")])
 
@@ -716,6 +728,6 @@ g3, g4 = st.columns(2)
 with g3:
     line_chart(macro, ["UST_10Y_2Y"], "Curve Slope History", ["#3b82f6"])
 with g4:
-    signal_history = macro[[c for c in ["VIX", "HY_OAS_Z", "PPR", "UST_10Y_2Y", "regime", "regime_detailed"] if c in macro.columns]].tail(12)
+    signal_history = macro[[c for c in ["VIX", "OAS_Z", "PPR", "UST_10Y_2Y", "regime", "regime_detailed"] if c in macro.columns]].tail(12)
     st.subheader("Recent Signal Table")
     st.dataframe(signal_history.reset_index(), use_container_width=True, hide_index=True)

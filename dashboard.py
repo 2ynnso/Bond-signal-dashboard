@@ -35,16 +35,26 @@ FRED_SERIES = {
     "HY_YIELD": "BAMLH0A0HYM2EY",
 }
 CARD_BG = {
-    "good": "#edf8f4",
-    "neutral": "#eef6ff",
-    "bad": "#fff0f0",
-    "info": "#f4f8ff",
+    "good": "#1a3d2a",
+    "neutral": "#1a2d4d",
+    "bad": "#3d1a1a",
+    "info": "#1a2d4d",
+    "very_risk_on": "#0f3d1f",
+    "risk_on": "#1a3d4d",
+    "risk_off": "#3d3d1a",
+    "very_risk_off": "#4d1a1a",
+    "agg_benchmark": "#2d2d1a",  # 노란색 계열 배경
 }
 CARD_BORDER = {
-    "good": "#20a464",
-    "neutral": "#3b82f6",
-    "bad": "#dc2626",
+    "good": "#4ade80",
+    "neutral": "#60a5fa",
+    "bad": "#ef4444",
     "info": "#60a5fa",
+    "very_risk_on": "#22c55e",
+    "risk_on": "#06b6d4",
+    "risk_off": "#eab308",
+    "very_risk_off": "#ff6b6b",
+    "agg_benchmark": "#facc15",  # 노란색 테두리
 }
 
 
@@ -66,13 +76,13 @@ def inject_css() -> None:
         """
         <style>
         .stApp, [data-testid="stAppViewContainer"], [data-testid="stHeader"] {
-            background: linear-gradient(180deg, #fbfdff 0%, #f4f8fc 100%);
-            color: #122033;
+            background: #000000;
+            color: #ffffff;
         }
         .block-container {max-width: 1380px; padding-top: 2.3rem; padding-bottom: 2rem;}
         [data-testid="stSidebar"] {
-            background: #f2f6fb;
-            border-right: 1px solid rgba(18,32,51,0.08);
+            background: #111111;
+            border-right: 1px solid #333333;
         }
         .hero {
             padding: 10px 0 18px 0;
@@ -82,12 +92,12 @@ def inject_css() -> None:
             font-weight: 800;
             line-height: 1.12;
             margin-bottom: 12px;
-            color: #122033;
+            color: #ffffff;
             padding-top: 4px;
         }
         .hero-sub {
             font-size: 1rem;
-            color: #4b5d74;
+            color: #cccccc;
             max-width: 760px;
             line-height: 1.45;
             margin-bottom: 2px;
@@ -96,42 +106,62 @@ def inject_css() -> None:
             border-radius: 18px;
             padding: 18px;
             min-height: 150px;
-            border: 1px solid rgba(18,32,51,0.08);
-            box-shadow: 0 12px 24px rgba(30,41,59,0.08);
+            border: 1px solid #333333;
+            box-shadow: 0 12px 24px rgba(0,0,0,0.8);
+            background: rgba(0,0,0,0.7);
         }
         .card-label {
             font-size: 0.82rem;
             font-weight: 700;
             letter-spacing: 0.05em;
             text-transform: uppercase;
-            color: #56708b;
+            color: #aaaaaa;
         }
         .card-value {
             margin-top: 10px;
             font-size: 2rem;
             font-weight: 800;
             line-height: 1.0;
-            color: #132238;
+            color: #ffffff;
         }
         .card-status {
             margin-top: 12px;
             font-size: 1rem;
             font-weight: 700;
-            color: #132238;
+            color: #ffffff;
         }
         .card-note {
             margin-top: 8px;
             font-size: 0.84rem;
-            color: #5b6f86;
+            color: #888888;
             line-height: 1.4;
+        }
+        .regime-card {
+            min-height: 200px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .regime-value {
+            margin-top: 12px;
+            font-size: 2.8rem;
+            font-weight: 900;
+            line-height: 1.1;
+            color: #ffffff;
         }
         .panel {
             border-radius: 16px;
             padding: 14px 16px;
-            border: 1px solid rgba(18,32,51,0.08);
-            background: rgba(255,255,255,0.7);
+            border: 1px solid #333333;
+            background: rgba(0,0,0,0.5);
         }
-        h1, h2, h3, p, label, span, div { color: #122033; }
+        h1, h2, h3, p, label, span, div { color: #ffffff; }
+        .stMetric { background: rgba(0,0,0,0.3); border: 1px solid #333333; border-radius: 10px; }
+        .stDataFrame { background: rgba(0,0,0,0.3); border: 1px solid #333333; }
+        [data-testid="stDataFrameContainer"] { color: #ffffff; }
+        table { color: #ffffff; }
+        th { color: #cccccc; background: rgba(0,0,0,0.5) !important; }
+        td { color: #ffffff; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -270,12 +300,44 @@ def fetch_ppr_series(start_date: pd.Timestamp) -> tuple[pd.Series, list[str]]:
     return ppr, []
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_agg_series(start_date: pd.Timestamp) -> tuple[pd.Series, list[str]]:
+    if yf is None:
+        return pd.Series(dtype=float), ["yfinance가 설치되지 않아 AGG 가격을 불러올 수 없습니다."]
+
+    try:
+        data = yf.download(
+            "AGG",
+            start=start_date.strftime("%Y-%m-%d"),
+            auto_adjust=True,
+            progress=False,
+            threads=False,
+            timeout=10,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return pd.Series(dtype=float), [f"AGG 로드 실패: {exc}"]
+
+    if data.empty:
+        return pd.Series(dtype=float), ["AGG 데이터가 비어 있습니다."]
+
+    agg = coerce_series(data, preferred_columns=["Adj Close", "Close", "AGG"])
+    agg = agg.dropna().sort_index()
+    agg.name = "AGG"
+    return agg, []
+
+
 def build_dataset(start_date: pd.Timestamp, api_key: str, include_ppr: bool) -> tuple[pd.DataFrame, list[str], str]:
     macro, warnings = fetch_fred_api(start_date, api_key)
     ppr_note = "PPR 비활성화"
 
     if macro.empty:
         return macro, warnings, ppr_note
+
+    # AGG 데이터 추가
+    agg, agg_warnings = fetch_agg_series(start_date)
+    warnings.extend(agg_warnings)
+    if not agg.empty:
+        macro = macro.join(agg, how="left").ffill()
 
     if include_ppr:
         ppr, ppr_warnings = fetch_ppr_series(start_date)
@@ -299,6 +361,12 @@ def build_dataset(start_date: pd.Timestamp, api_key: str, include_ppr: bool) -> 
         ["Risk Off", "Neutral"],
         default="Risk On",
     )
+    # 4단계 Regime 분류
+    macro["regime_detailed"] = np.select(
+        [macro["risk_off_score"] == 0, macro["risk_off_score"] == 1, macro["risk_off_score"] == 2, macro["risk_off_score"] >= 3],
+        ["Regime 1: Very Risk On", "Regime 2: Risk On", "Regime 3: Risk Off", "Regime 4: Very Risk Off"],
+        default="N/A",
+    )
     return macro, warnings, ppr_note
 
 
@@ -312,6 +380,19 @@ def latest_delta(frame: pd.DataFrame, column: str, periods: int = 5) -> float:
     if len(series) <= periods:
         return np.nan
     return float(series.iloc[-1] - series.iloc[-1 - periods])
+
+
+def classify_regime_detailed(regime: str) -> tuple[str, str]:
+    if pd.isna(regime):
+        return "info", "N/A"
+    if "Very Risk On" in regime:
+        return "very_risk_on", "공격적 매수 시점"
+    elif "Risk On" in regime:
+        return "risk_on", "매수 포지션 강화"
+    elif "Risk Off" in regime and "Very" not in regime:
+        return "risk_off", "방어적 포지션 전환"
+    else:  # Very Risk Off
+        return "very_risk_off", "현금 보유 또는 방어"
 
 
 def classify_vix(value: float) -> tuple[str, str, str]:
@@ -368,6 +449,20 @@ def render_card(title: str, value: str, status: str, note: str, tone: str) -> No
     )
 
 
+def render_regime_card(regime_name: str, note: str, risk_score: str, tone: str) -> None:
+    st.markdown(
+        f"""
+        <div class="card regime-card" style="background:{CARD_BG[tone]}; border-color:{CARD_BORDER[tone]};">
+            <div class="card-label">CURRENT REGIME</div>
+            <div class="regime-value">{regime_name}</div>
+            <div class="card-status">{note}</div>
+            <div class="card-note">{risk_score}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_hero(date_label: str, regime: str) -> None:
     st.markdown(
         f"""
@@ -408,10 +503,9 @@ def render_snapshot_board(title: str, items: list[dict[str, str]], columns_per_r
                 if idx < len(row):
                     item = row[idx]
                     delta_value = item["delta"].replace("chg ", "")
-                    if delta_value == "N/A":
-                        delta_value = None
+                    delta_float = None if delta_value == "N/A" else delta_value
                     with col:
-                        st.metric(item["label"], item["value"], delta=delta_value, border=True)
+                        st.metric(item["label"], item["value"], delta=delta_float, border=True)
 
 
 def line_chart(frame: pd.DataFrame, columns: list[str], title: str, colors: list[str]) -> None:
@@ -440,7 +534,7 @@ def line_chart(frame: pd.DataFrame, columns: list[str], title: str, colors: list
             )
         )
     fig.update_layout(
-        title=dict(text=title, x=0, y=0.96, xanchor="left", yanchor="top", font=dict(size=20, color="#122033")),
+        title=dict(text=title, x=0, y=0.96, xanchor="left", yanchor="top", font=dict(size=20, color="#ffffff")),
         height=340,
         margin=dict(l=18, r=18, t=128, b=18),
         legend=dict(
@@ -449,13 +543,13 @@ def line_chart(frame: pd.DataFrame, columns: list[str], title: str, colors: list
             y=1.28,
             xanchor="left",
             x=0,
-            font=dict(size=11, color="#42566d"),
+            font=dict(size=11, color="#cccccc"),
         ),
-        paper_bgcolor="#ffffff",
-        plot_bgcolor="#ffffff",
+        paper_bgcolor="#111111",
+        plot_bgcolor="#000000",
     )
-    fig.update_xaxes(showgrid=False, color="#5f7389")
-    fig.update_yaxes(gridcolor="rgba(18,32,51,0.08)", color="#5f7389")
+    fig.update_xaxes(showgrid=False, color="#888888")
+    fig.update_yaxes(gridcolor="rgba(255,255,255,0.1)", color="#888888")
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
@@ -499,15 +593,15 @@ def signal_focus_chart(
 
     fig.update_layout(
         title=title,
-        title_font=dict(size=18, color="#122033"),
+        title_font=dict(size=18, color="#ffffff"),
         height=240,
         margin=dict(l=14, r=14, t=56, b=10),
         showlegend=False,
-        paper_bgcolor="#ffffff",
-        plot_bgcolor="#ffffff",
+        paper_bgcolor="#111111",
+        plot_bgcolor="#000000",
     )
-    fig.update_xaxes(showgrid=False, color="#5f7389")
-    fig.update_yaxes(gridcolor="rgba(18,32,51,0.08)", color="#5f7389")
+    fig.update_xaxes(showgrid=False, color="#888888")
+    fig.update_yaxes(gridcolor="rgba(255,255,255,0.1)", color="#888888")
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
 
@@ -541,10 +635,26 @@ latest = macro.dropna(how="all").iloc[-1]
 latest_date = macro.index.max().strftime("%Y-%m-%d")
 render_hero(latest_date, str(latest["regime"]))
 
+# Regime 상세 정보
+regime_detailed = latest["regime_detailed"] if "regime_detailed" in latest.index else "N/A"
+regime_tone, regime_note = classify_regime_detailed(regime_detailed)
+st.divider()
+st.markdown("### Strategy Regime")
+risk_score_detail = f"Risk Score:\n• VIX({format_value(latest_value(macro, 'VIX'))}) • OAS_Z({format_value(latest_value(macro, 'HY_OAS_Z'))}) • PPR({format_value(latest_value(macro, 'PPR'))})"
+render_regime_card(regime_detailed, regime_note, risk_score_detail, regime_tone)
+
 vix_tone, vix_status, vix_note = classify_vix(latest_value(macro, "VIX"))
 oas_tone, oas_status, oas_note = classify_oas_z(latest_value(macro, "HY_OAS_Z"))
 ppr_tone, ppr_status, ppr_note_short = classify_ppr(latest_value(macro, "PPR"))
 spread_tone, spread_status, spread_note = classify_spread(latest_value(macro, "UST_10Y_2Y"))
+
+# AGG ETF 정보
+agg_value = latest_value(macro, "AGG")
+agg_delta = latest_delta(macro, "AGG", 1)  # 1일 전일대비
+agg_tone = "agg_benchmark"  # 노란색 계열 고정
+
+st.markdown("### Key Signal Indicators")
+st.markdown("**3가지 위험도 지표 + 벤치마크 ETF**")
 
 c1, c2, c3, c4 = st.columns(4)
 with c1:
@@ -555,9 +665,10 @@ with c3:
     ppr_display = format_value(latest_value(macro, "PPR"))
     render_card("PPR", ppr_display, ppr_status, ppr_note_short, ppr_tone)
 with c4:
-    render_card("US 10Y-2Y", format_value(latest_value(macro, "UST_10Y_2Y"), "%"), spread_status, spread_note, spread_tone)
+    render_card("AGG ETF", format_value(agg_value, "$"), format_signed(agg_delta, "$"), "Benchmark ETF", agg_tone)
 
 st.caption(ppr_note)
+
 st.markdown("### Treasury Snapshot")
 
 render_snapshot_board(
@@ -605,6 +716,6 @@ g3, g4 = st.columns(2)
 with g3:
     line_chart(macro, ["UST_10Y_2Y"], "Curve Slope History", ["#3b82f6"])
 with g4:
-    signal_history = macro[[c for c in ["VIX", "HY_OAS_Z", "PPR", "UST_10Y_2Y", "regime"] if c in macro.columns]].tail(12)
+    signal_history = macro[[c for c in ["VIX", "HY_OAS_Z", "PPR", "UST_10Y_2Y", "regime", "regime_detailed"] if c in macro.columns]].tail(12)
     st.subheader("Recent Signal Table")
-    st.dataframe(signal_history.reset_index(), width="stretch", hide_index=True)
+    st.dataframe(signal_history.reset_index(), use_container_width=True, hide_index=True)
